@@ -23,7 +23,7 @@ Then add:
   - Publish `/belief` (`std_msgs/Float64MultiArray`, 11 values, offices 2..12).
   - Runs until Ctrl+C (optional arg N = stop after N patches).
 - Executable `belief_plot`: live matplotlib bar chart of `/belief` with office numbers and the best
-  office highlighted. Same structure as `reference/lab3_working/src/lab_3/lab_3/live_plot.py` (exits
+  office highlighted. Same structure as the course's `labs/lab_3/lab_3/live_plot.py` (exits
   quietly without a display).
 - `setup.sh --launch` also opens a [PC] tab with `belief_plot`.
 
