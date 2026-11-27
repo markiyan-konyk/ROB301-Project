@@ -25,11 +25,16 @@ Do not look for or reuse code from anywhere else.
 
 ## Workspace and layout (do not deviate)
 
-- Remote PC workspace: `~/ros2_ws` (as in `labs/lab_3/README.md`). Pi workspace: the one that
-  already holds the `camera` package (on the Pi, `ros2 pkg prefix camera` prints
-  `<ws>/install/camera`); if there is none, `~/ros2_ws`. Never create any other workspace (none
-  inside the repo, no venv, no `pip install`, no `apt`). Allowed deps: rclpy, std_msgs,
-  geometry_msgs, nav_msgs, sensor_msgs, numpy, matplotlib.
+- Remote PC workspace: `~/ros2_ws` (as in `labs/lab_3/README.md`). Pi workspace: `~/turtlebot3_ws`
+  (holds the TurtleBot3 drivers and the `camera` package; confirmed on our robot). Hard-code
+  both; never auto-detect a workspace, never run `colcon` in a home folder. Never create any
+  other workspace (none inside the repo, no venv, no `pip install`, no `apt`). Allowed deps:
+  rclpy, std_msgs, geometry_msgs, nav_msgs, sensor_msgs, numpy, matplotlib.
+- The Pi's `~/.bashrc` (set up by the lab) sources `/opt/ros/jazzy` and `~/turtlebot3_ws` and
+  exports `TURTLEBOT3_MODEL` and `LDS_MODEL`; bringup needs all of them. Anything that runs on the
+  Pi must go through it, like a normal ssh terminal:
+  `ssh -t pi@<PI_IP> "bash -ic 'ros2 launch turtlebot3_bringup robot.launch.py'"`.
+  Never replace it with your own `source` / `export` lines.
 - Packages are **ament_python** with exactly the layout of `labs/lab_3`: `package.xml`, `setup.py`,
   `setup.cfg`, `resource/<pkg>`, `<pkg>/__init__.py`, console_scripts entry points. No CMake,
   no custom messages.
@@ -37,7 +42,7 @@ Do not look for or reuse code from anywhere else.
 
 ```
 AGENTS.md, specs/          instructions (this)
-Resources/camera/          camera package for the Pi (from our teammate): copy it, do not change it
+Resources/camera/          camera package for the Pi (from our teammate): copy d2_full_route/src/camera
 labs/, final_project/      course starter code and lab PDFs (read-only)
 d1_bayes_sim/              Deliverable 1   (plain Python, no ROS)
 d2_full_route/             Deliverable 2   package: route_follower
@@ -45,8 +50,10 @@ d3_bayes_node/             Deliverable 3   package: bayes_localization
 d4_mail_delivery/          Deliverable 4   package: mail_robot
 ```
 
-Each deliverable folder is fully self-contained: its own `README.md`, `setup.sh`, its own copy of
-`Resources/camera` in `src/camera`, and its own copy of any shared helper. No imports across
+Each deliverable folder is fully self-contained: its own `README.md`, `setup.sh`, its own
+`src/camera` (copy `d2_full_route/src/camera`: the teammate's package with both camera
+subscriptions switched to `qos_profile_sensor_data`, without which a best-effort camera driver
+gives no images), and its own copy of any shared helper. No imports across
 folders. Package names differ, so all deliverables can be built side by side.
 
 ## ROS interfaces
@@ -98,29 +105,31 @@ demo day).
 
 ## Every robot deliverable (D2-D4) ships
 
-**`setup.sh <PI_IP> [--launch] [--calibrate]`**, run once on the Remote PC, safe to re-run,
-`set -e`, clear `=== step ===` output, stops with a clear message on any failure:
+**`setup.sh <PI_IP> [--launch] [--calibrate]`**: copy `d2_full_route/setup.sh` (the fixed,
+known-good version) and change only `PKG`, the demo command in step 7 and any extra tabs the spec
+asks for. Do not redesign it. Its steps: 1 ping + PC IP, 2 ssh key (`~/.ssh/id_ed25519`),
+3 `ROS_STATIC_PEERS` / `ROS_DOMAIN_ID` in both `~/.bashrc`, 4 Pi: fix + check its ROS environment,
+copy and build `camera` in `~/turtlebot3_ws`, 5 PC: symlink + build the package in `~/ros2_ws`,
+6 `ros2 daemon stop` on both (`|| true`), 7 `--launch`: terminal tabs + topic check + demo tab.
 
-1. Ping the Pi; find this PC's IP towards it (`ip route get <PI_IP>`).
-2. ssh key to `pi@<PI_IP>` (ssh-keygen + ssh-copy-id) so the password is typed at most once.
-3. `~/.bashrc` on both machines: replace any `ROS_STATIC_PEERS` line with the other machine's IP;
-   make the Pi's `ROS_DOMAIN_ID` match the PC's.
-4. Copy `src/camera` to `<pi_ws>/src/camera` on the Pi (replace the old copy) and
-   `colcon build --symlink-install --packages-select camera` there.
-5. Symlink `src/<pkg>` into `~/ros2_ws/src/<pkg>` on the PC, `rm -rf build/<pkg> install/<pkg>`,
-   `colcon build --symlink-install --packages-select <pkg>` (edits are then live, no rebuild).
-   Add `source <ws>/install/setup.bash` to `~/.bashrc` on both machines if missing.
-6. `ros2 daemon stop` on both machines.
-7. Only with `--launch`, gnome-terminal tabs: [PI] bringup, [PI] camera, wait ~25 s, check from
-   the PC that `/line_idx`, `/mean_img_rgb`, `/odom` exist (print OK / MISSING), then one [PC] tab
-   that runs `calibrate_colors` if `~/rob301_colors.json` is missing or `--calibrate` was given,
-   then `read -p "Robot in place? Press Enter to start"`, then the demo node.
+Rules it follows, keep them:
 
-Put `PKG`, `PC_WS=ros2_ws` at the top. Source `/opt/ros/jazzy/setup.bash` in every remote command.
+- Plain bash, lab3-style. Remote multi-line edits via `ssh pi@<PI_IP> bash -s -- args <<'EOF'`;
+  no Python to edit files, no clever quoting.
+- Pi commands that need the robot environment run through the Pi's `~/.bashrc` (`bash -ic`, see
+  Workspace above). Its "cannot set terminal process group / no job control" warnings without a
+  tty are harmless noise.
+- Pi workspace is `~/turtlebot3_ws`, hard-coded. Building `camera` only needs
+  `source /opt/ros/jazzy/setup.bash && cd ~/turtlebot3_ws && colcon build --packages-select camera`.
+- Before launching, check (through the Pi's `~/.bashrc`) that `turtlebot3_bringup`, `camera` and
+  `v4l2_camera` are found and `TURTLEBOT3_MODEL` / `LDS_MODEL` are set; if not, print the Pi's
+  `~/.bashrc` ROS lines and stop with a clear message.
+- Commands that legitimately "fail" when nothing is wrong (`ros2 daemon stop`) get `|| true`.
 
 **`README.md`**: what the demo shows; one-shot path (`git clone` the repo on the Remote PC,
 `bash <folder>/setup.sh <PI_IP> --launch`, open new terminals afterwards); manual path as a table
-of terminals labelled [PI] / [PC] with exact commands; the TA demo step by step; tuning knobs;
+of terminals labelled [PI] / [PC] with exact commands ([PI] rows are just `ssh pi@<PI_IP>` then
+the `ros2 launch` command, no extra `source` / `export`); the TA demo step by step; tuning knobs;
 short troubleshooting (topics missing on the PC -> network step 3 and new terminals; robot turns
 away from the line -> flip KP sign; patches missed -> recalibrate). Every command labelled [PC]
 or [PI].

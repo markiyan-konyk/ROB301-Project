@@ -11,7 +11,7 @@ line to the next patch, crosses it, and so on until it has gone once around the 
 d2_full_route/
   README.md
   setup.sh                 (see AGENTS.md; PKG=route_follower)
-  src/camera/              (unchanged copy of Resources/camera)
+  src/camera/              (Resources/camera with sensor-data QoS, see AGENTS.md)
   src/route_follower/      ament_python package
 ```
 

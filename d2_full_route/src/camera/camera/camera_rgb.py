@@ -4,6 +4,7 @@
 
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
 
 from std_msgs.msg import Float64MultiArray
 from sensor_msgs.msg import Image
@@ -22,11 +23,12 @@ class CameraRGB(Node):
             1
         )
 
+        # Sensor-data QoS (best effort): see camera_mono.py
         self.camera_subscriber = self.create_subscription(
             Image,
             'camera/image',
             self.camera_callback,
-            1
+            qos_profile_sensor_data
         )
 
         self.bridge = CvBridge()

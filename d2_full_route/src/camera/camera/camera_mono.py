@@ -2,6 +2,7 @@
 
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
 
 from std_msgs.msg import UInt32
 from sensor_msgs.msg import Image
@@ -20,11 +21,14 @@ class CameraMono(Node):
             1
         )
 
+        # Sensor-data QoS (best effort) receives images whether the camera driver
+        # publishes them reliable or best effort. With the default (reliable) QoS a
+        # best-effort camera gives no images and no /line_idx.
         self.camera_subscriber = self.create_subscription(
             Image,
             'camera/image',
             self.camera_callback,
-            1
+            qos_profile_sensor_data
         )
 
         self.bridge = CvBridge()

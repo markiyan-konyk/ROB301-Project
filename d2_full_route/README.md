@@ -6,8 +6,9 @@ starting office and prints `Full route done`. This counts arrivals, not map offi
 numbers: `Office #1 reached: blue` means the first patch after the starting patch.
 There is no localization in D2.
 
-This folder is self-contained. `src/camera` is an unchanged copy of the teammate's
-camera package for the Pi. `src/route_follower` runs on the Remote PC, using ROS 2
+This folder is self-contained. `src/camera` is the teammate's camera package for the
+Pi, with one change: both nodes subscribe to the camera with sensor-data QoS (with the
+default reliable QoS a best-effort camera driver delivers no images, so no `/line_idx`). `src/route_follower` runs on the Remote PC, using ROS 2
 Jazzy / Ubuntu 24.04 / Python 3.12. The camera and robot dependencies supplied in the
 lab must already be installed; setup does not install software.
 
@@ -22,19 +23,28 @@ bash d2_full_route/setup.sh <PI_IP> --launch
 ```
 
 Replace `<PI_IP>` with the robot's IPv4 address. The Pi password is `turtlebot`;
-setup asks at most once to install a dedicated SSH key. Keep the checkout in place:
-the PC package is symlinked from it. Setup is safe to rerun; stop any previous demo
-and driver processes before relaunching. It refuses to overwrite an unrelated PC
-source directory or symlink.
+setup asks for it at most once (it installs your `~/.ssh/id_ed25519` key, so plain
+`ssh pi@<PI_IP>` needs no password afterwards). Keep the checkout in place: the PC
+package is symlinked from it. Setup is safe to rerun; close the old robot tabs first.
 
-Setup finds the PC's IP towards the Pi, updates both machines' ROS peers, makes the
-Pi domain match the PC's current `ROS_DOMAIN_ID` (0 if unset), copies/builds camera
-in the Pi's existing camera workspace (or `~/ros2_ws` if none), and builds the PC
-package in `~/ros2_ws`. It replaces the old Pi camera source. A first-run
-`~/.bashrc.rob301.bak` preserves each machine's original shell configuration.
-It restarts discovery, opens Pi bringup and camera tabs, waits 25 seconds, and
-checks `/line_idx`, `/mean_img_rgb`, and `/odom` from the PC. Missing topics abort
-before opening the demo tab.
+What it does:
+
+1. Pings the Pi and finds this PC's IP towards it.
+2. Sets up the ssh key.
+3. Writes `ROS_STATIC_PEERS` (the other machine's IP) and the same `ROS_DOMAIN_ID` into
+   `~/.bashrc` on both machines (the Pi's original is kept as `~/.bashrc.rob301.bak`).
+4. Pi: makes sure its `~/.bashrc` sources `~/turtlebot3_ws` and stops sourcing any
+   broken workspace in the Pi home folder (`~/install`); copies `src/camera` to
+   `~/turtlebot3_ws/src/camera` and builds it; then checks, in the same shell an ssh
+   terminal gets, that `turtlebot3_bringup`, `camera` and `v4l2_camera` are found and
+   `TURTLEBOT3_MODEL` / `LDS_MODEL` are set. If not, it prints the Pi's `~/.bashrc` ROS
+   lines and stops.
+5. PC: links `src/route_follower` into `~/ros2_ws/src` and builds it.
+6. Restarts the ROS 2 daemon on both machines.
+7. With `--launch`: opens the [PI] bringup and camera tabs (through the Pi's own
+   `~/.bashrc`, like a normal ssh terminal), waits 25 s, checks `/odom`, `/line_idx`,
+   `/mean_img_rgb` from the PC, then opens the demo tab. Missing topics stop it before
+   the demo tab.
 
 The PC demo tab calibrates if `~/rob301_colors.json` is absent. For each of blue,
 green, yellow, orange, and line, place the robot on that surface, press Enter,
@@ -61,17 +71,21 @@ bash d2_full_route/setup.sh <PI_IP> --launch --calibrate
 bash d2_full_route/setup.sh <PI_IP>
 ```
 
-Open new terminals. For Pi terminals, connect from the PC with
-[PC] `ssh pi@<PI_IP>`, or [PC] `ssh -i ~/.ssh/rob301_ed25519 pi@<PI_IP>`
-to use the setup key. Run these rows in order, keeping driver tabs open:
+Open **new** terminals (they load the updated `~/.bashrc`, nothing else needs
+sourcing). A [PI] terminal is a PC terminal in which you first ran `ssh pi@<PI_IP>`.
+Run these in order, keeping the driver terminals open:
 
 | Terminal | Exact commands |
 | --- | --- |
-| [PI] 1: motors, lidar, odometry | `source ~/.bashrc`<br>`source /opt/ros/jazzy/setup.bash`<br>`export TURTLEBOT3_MODEL=waffle_pi`<br>`ros2 launch turtlebot3_bringup robot.launch.py` |
-| [PI] 2: camera | `source ~/.bashrc`<br>`source /opt/ros/jazzy/setup.bash`<br>`ros2 launch camera camera.launch.py` |
-| [PC] 3: check topics, then calibrate | `source ~/.bashrc`<br>`source /opt/ros/jazzy/setup.bash`<br>`source ~/ros2_ws/install/setup.bash`<br>`ros2 topic list`<br>`ros2 run route_follower calibrate_colors` |
-| [PC] 4: optional stationary sensor check | `source ~/.bashrc`<br>`source /opt/ros/jazzy/setup.bash`<br>`source ~/ros2_ws/install/setup.bash`<br>`ros2 run route_follower color_monitor` |
+| [PI] 1: motors, lidar, odometry | `ssh pi@<PI_IP>`<br>`ros2 launch turtlebot3_bringup robot.launch.py` |
+| [PI] 2: camera | `ssh pi@<PI_IP>`<br>`ros2 launch camera camera.launch.py` |
+| [PC] 3: check topics, then calibrate | `ros2 topic list` (must include `/odom /line_idx /mean_img_rgb`)<br>`ros2 run route_follower calibrate_colors` |
+| [PC] 4: optional stationary sensor check | `ros2 run route_follower color_monitor` |
 | [PC] 3: start when robot is in place | `ros2 run route_follower route_follower` |
+
+Do not add `source` / `export` lines in the [PI] terminals: the Pi's `~/.bashrc`
+already sets the workspace, `TURTLEBOT3_MODEL` and `LDS_MODEL`, and bringup needs all
+of them.
 
 The camera launch already starts the camera driver. `/odom` is checked as evidence
 that bringup is running; D2 itself needs only the two camera topics.
@@ -124,6 +138,13 @@ on patch versus line. If either sensor stops arriving for over one second, the
 controller stops and warns; it resumes when both are fresh. Pending debounce and
 PID history reset during a stale-data stop.
 
+- `Package 'turtlebot3_bringup' not found` or `not found: .../install/...local_setup.bash`
+  on the Pi: its `~/.bashrc` sources a wrong or broken workspace. Rerun setup: step 4
+  repairs the usual case and otherwise prints the Pi's `~/.bashrc` ROS lines. It must
+  source `/opt/ros/jazzy/setup.bash` and `~/turtlebot3_ws/install/setup.bash` and export
+  `TURTLEBOT3_MODEL=waffle_pi` and `LDS_MODEL`; ask the TA if those are missing.
+- `bash: cannot set terminal process group` / `no job control`: harmless (a Pi shell
+  started without a terminal), ignore it.
 - Topics missing on the PC: rerun setup's network configuration (step 3), check both
   machines point `ROS_STATIC_PEERS` at each other and share `ROS_DOMAIN_ID`, and open
   new terminals. Look at the Pi tabs for bringup/camera failures.

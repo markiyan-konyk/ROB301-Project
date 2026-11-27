@@ -1,141 +1,168 @@
 #!/usr/bin/env bash
-PKG=route_follower
-PC_WS=ros2_ws
-set -eEo pipefail
-trap 'echo "ERROR: setup failed at line $LINENO. Fix the reported problem and rerun." >&2' ERR
-fail() { echo "ERROR: $*" >&2; exit 1; }
-step() { echo "=== $* ==="; }
-[[ $# -ge 1 ]] || fail "Usage: bash setup.sh <PI_IP> [--launch] [--calibrate]"
-PI_IP=$1
-shift
+# ROB301 Deliverable 2 setup. Run it on the REMOTE PC (not on the Pi):
+#
+#   bash d2_full_route/setup.sh <PI_IP>                       network + copy + build
+#   bash d2_full_route/setup.sh <PI_IP> --launch              same, then open the robot terminals and the demo
+#   bash d2_full_route/setup.sh <PI_IP> --launch --calibrate  same, and redo the colour calibration
+#
+# Steps: 1 ping, 2 ssh key, 3 ROS network in ~/.bashrc (both machines), 4 Pi: check its ROS
+# environment, copy + build the camera package, 5 PC: link + build our package, 6 restart the
+# ROS 2 daemon, 7 (--launch) open the terminals. Safe to run again every session.
+
+set -e
+
+PKG=route_follower      # our package, runs on the Remote PC
+PC_WS=ros2_ws           # Remote PC workspace: ~/ros2_ws
+PI_WS=turtlebot3_ws     # Pi workspace: ~/turtlebot3_ws (already has the TurtleBot3 drivers)
+
+PI_IP="$1"
 LAUNCH=0
 CALIBRATE=0
-for option in "$@"; do
-    case "$option" in
+for a in "${@:2}"; do
+    case "$a" in
         --launch) LAUNCH=1 ;;
         --calibrate) CALIBRATE=1 ;;
-        *) fail "Unknown option: $option" ;;
+        *) echo "ERROR: unknown option $a"; exit 1 ;;
     esac
 done
-python3 - "$PI_IP" <<'PY'
-import ipaddress, sys
-ipaddress.IPv4Address(sys.argv[1])
-PY
-HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-WS="$HOME/$PC_WS"
-[[ -f /opt/ros/jazzy/setup.bash ]] || fail 'Run on the Ubuntu 24.04 Remote PC with ROS 2 Jazzy.'
-source /opt/ros/jazzy/setup.bash
-for tool in ping ip ssh ssh-keygen ssh-copy-id tar colcon; do
-    command -v "$tool" >/dev/null || fail "Missing required command: $tool"
-done
-if (( LAUNCH )); then
-    command -v gnome-terminal >/dev/null || fail 'gnome-terminal is required for --launch.'
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # this deliverable folder
+PI="pi@$PI_IP"
+SSH="ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5"
+ROS="source /opt/ros/jazzy/setup.bash"
+
+step() { echo; echo "=== $1 ==="; }
+fail() { echo "ERROR: $1"; exit 1; }
+# Run a command on the Pi through its own ~/.bashrc (TURTLEBOT3_MODEL, LDS_MODEL, ~/turtlebot3_ws),
+# exactly like an ssh terminal. The grep hides bash's harmless "no job control" warnings.
+pi_rc() { $SSH "$PI" "bash -ic '$1'" 2>&1 | grep -v -e 'terminal process group' -e 'no job control' || true; }
+
+[ -n "$PI_IP" ] || fail "usage: bash $0 <PI_IP> [--launch] [--calibrate]"
+[ -d "$HERE/src/camera" ] && [ -d "$HERE/src/$PKG" ] || fail "run the script from inside the repo checkout"
+[ -f /opt/ros/jazzy/setup.bash ] || fail "run this on the Remote PC (Ubuntu 24.04 + ROS 2 Jazzy)"
+
+
+step "1. Ping the Pi ($PI_IP)"
+ping -c 2 -W 2 "$PI_IP" > /dev/null || fail "no reply from $PI_IP. Is the robot on? Is the IP right?"
+PC_IP=$(ip route get "$PI_IP" | grep -oP 'src \K\S+' || true)
+[ -n "$PC_IP" ] || fail "could not find this PC's IP towards the Pi"
+echo "Pi: $PI_IP    this PC: $PC_IP"
+
+
+step "2. ssh key (type the Pi password 'turtlebot' if asked)"
+if ! $SSH -o BatchMode=yes "$PI" true 2> /dev/null; then
+    [ -f ~/.ssh/id_ed25519 ] || ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519
+    ssh-copy-id -o StrictHostKeyChecking=accept-new -i ~/.ssh/id_ed25519.pub "$PI"
 fi
-step '1: Check Pi and find PC address'
-ping -c 1 -W 3 "$PI_IP" >/dev/null || fail "Pi $PI_IP is unreachable."
-PC_IP=$(ip route get "$PI_IP" | awk '{for(i=1;i<=NF;i++) if($i=="src") {print $(i+1); exit}}')
-[[ -n "$PC_IP" ]] || fail 'Could not find PC source IP.'
-echo "PC: $PC_IP; Pi: $PI_IP"
-step '2: Set up SSH key (Pi password: turtlebot)'
-mkdir -p "$HOME/.ssh"
-KEY="$HOME/.ssh/rob301_ed25519"
-[[ -f "$KEY" ]] || ssh-keygen -t ed25519 -N '' -f "$KEY"
-SSH=(ssh -i "$KEY" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -o BatchMode=yes "pi@$PI_IP")
-if ! "${SSH[@]}" 'source /opt/ros/jazzy/setup.bash; true' 2>/dev/null; then
-    ssh-copy-id -i "$KEY.pub" -o StrictHostKeyChecking=accept-new -o NumberOfPasswordPrompts=1 "pi@$PI_IP"
+$SSH -o BatchMode=yes "$PI" true || fail "cannot ssh to $PI"
+echo "OK"
+
+
+step "3. ROS network settings in ~/.bashrc (both machines)"
+# Same ROS_DOMAIN_ID on both: the Pi gets the PC's value
+PC_DOMAIN=$(bash -ic 'echo "DOMAIN=${ROS_DOMAIN_ID:-0}"' 2> /dev/null | grep -oP 'DOMAIN=\K.*' | tail -1)
+[ -n "$PC_DOMAIN" ] || PC_DOMAIN=0
+# Each machine lists the OTHER machine's IP
+sed -i '/ROS_STATIC_PEERS/d; /ROS_DOMAIN_ID/d' ~/.bashrc
+echo "export ROS_STATIC_PEERS=$PI_IP" >> ~/.bashrc
+echo "export ROS_DOMAIN_ID=$PC_DOMAIN" >> ~/.bashrc
+$SSH "$PI" bash -s -- "$PC_IP" "$PC_DOMAIN" << 'EOF'
+set -e
+[ -f ~/.bashrc.rob301.bak ] || cp ~/.bashrc ~/.bashrc.rob301.bak
+sed -i '/ROS_STATIC_PEERS/d; /ROS_DOMAIN_ID/d' ~/.bashrc
+echo "export ROS_STATIC_PEERS=$1" >> ~/.bashrc
+echo "export ROS_DOMAIN_ID=$2" >> ~/.bashrc
+EOF
+echo "PC: ROS_STATIC_PEERS=$PI_IP   Pi: ROS_STATIC_PEERS=$PC_IP   ROS_DOMAIN_ID=$PC_DOMAIN on both"
+
+
+step "4. Pi: check the ROS environment, copy the camera package to ~/$PI_WS and build it (1-2 min)"
+$SSH "$PI" "test -d ~/$PI_WS/src" || fail "~/$PI_WS/src not found on the Pi (the TurtleBot3 workspace). Ask the TA."
+# The Pi's ~/.bashrc must source ~/turtlebot3_ws. A workspace in the Pi home folder itself
+# (~/install, left by a colcon build run in ~) breaks the drivers: stop sourcing it.
+$SSH "$PI" bash -s -- "$PI_WS" << 'EOF'
+set -e
+WS=$1
+if grep -qE '^[[:space:]]*(source|\.)[[:space:]]+(~|\$HOME|/home/pi)/install/' ~/.bashrc; then
+    echo "Disabling these lines in the Pi's ~/.bashrc (broken workspace in the home folder):"
+    grep -nE '^[[:space:]]*(source|\.)[[:space:]]+(~|\$HOME|/home/pi)/install/' ~/.bashrc
+    sed -i -E 's@^([[:space:]]*(source|\.)[[:space:]]+(~|\$HOME|/home/pi)/install/.*)@# disabled by rob301 setup: \1@' ~/.bashrc
 fi
-"${SSH[@]}" 'source /opt/ros/jazzy/setup.bash; true'
-# Quote every remote argument for the remote shell.
-remote() {
-    local command='source /opt/ros/jazzy/setup.bash && ' quoted
-    printf -v quoted '%q ' "$@"
-    "${SSH[@]}" "$command$quoted"
-}
-step '3: Configure ROS peers and domain on both machines'
-DOMAIN=${ROS_DOMAIN_ID:-0}
-[[ "$DOMAIN" =~ ^[0-9]+$ ]] || fail 'ROS_DOMAIN_ID must be an integer.'
-(( 10#$DOMAIN <= 232 )) || fail 'ROS_DOMAIN_ID must be between 0 and 232.'
-# This helper edits only ROS assignments; a backup preserves the original bashrc.
-UPDATE_RC=$(cat <<'PY'
-import pathlib, re, sys
-peer, domain, workspace = sys.argv[1:]
-p = pathlib.Path.home()/'.bashrc'
-text = p.read_text() if p.exists() else ''
-backup = p.with_name('.bashrc.rob301.bak')
-if not backup.exists():
-    backup.write_text(text)
-lines = [line for line in text.splitlines() if not re.match(r'^\s*(?:export\s+)?ROS_(?:STATIC_PEERS|DOMAIN_ID)\s*=', line)]
-lines += [f'export ROS_STATIC_PEERS="{peer}"', f'export ROS_DOMAIN_ID="{domain}"']
-if workspace:
-    import shlex
-    source = 'source ' + shlex.quote(str(pathlib.Path(workspace)/'install/setup.bash'))
-    if source not in lines:
-        lines.append(source)
-p.write_text('\n'.join(lines)+'\n')
-PY
-)
-python3 -c "$UPDATE_RC" "$PI_IP" "$DOMAIN" ''
-remote python3 -c "$UPDATE_RC" "$PC_IP" "$DOMAIN" ''
-export ROS_STATIC_PEERS="$PI_IP" ROS_DOMAIN_ID="$DOMAIN"
-step '4: Find Pi camera workspace, replace camera source, build'
-# Interactive bash loads the Pi's existing overlay from .bashrc.
-PI_WS=$(remote bash -ic 'source /opt/ros/jazzy/setup.bash; prefix=$(ros2 pkg prefix camera 2>/dev/null) || prefix=""; if [[ -n "$prefix" ]]; then case "$prefix" in */install/camera) printf "ROB301_WS=%s\n" "${prefix%/install/camera}" ;; *) echo "Unsupported camera prefix: $prefix" >&2; exit 1 ;; esac; else printf "ROB301_WS=%s/ros2_ws\n" "$HOME"; fi' | sed -n 's/^ROB301_WS=//p')
-[[ "$PI_WS" == /* && "$PI_WS" != / && "$PI_WS" != *$'\n'* ]] || fail 'Could not determine a safe Pi workspace path.'
-echo "Pi workspace: $PI_WS"
-remote bash -c 'set -e; ws=$1; mkdir -p "$ws/src"; rm -rf -- "$ws/src/camera"; mkdir -p "$ws/src/camera"' bash "$PI_WS"
-tar -C "$HERE/src/camera" -cf - . | remote tar -C "$PI_WS/src/camera" -xf -
-remote bash -c 'set -e; source /opt/ros/jazzy/setup.bash; cd "$1"; colcon build --symlink-install --packages-select camera' bash "$PI_WS"
-remote python3 -c "$UPDATE_RC" "$PC_IP" "$DOMAIN" "$PI_WS"
-step '5: Link and build Remote PC package'
-mkdir -p "$WS/src"
-DEST="$WS/src/$PKG"
-if [[ -L "$DEST" ]]; then
-    [[ "$(readlink "$DEST")" == "$HERE/src/$PKG" ]] || fail "$DEST points elsewhere; resolve it before rerunning."
-elif [[ -e "$DEST" ]]; then
-    fail "$DEST already exists and is not our symlink; move it aside before rerunning."
-else
-    ln -s "$HERE/src/$PKG" "$DEST"
+grep -qE "^[[:space:]]*source[[:space:]].*$WS/install/setup.bash" ~/.bashrc || echo "source ~/$WS/install/setup.bash" >> ~/.bashrc
+if [ -d ~/install ]; then
+    echo "Note: ~/install exists on the Pi (a colcon build run in the home folder). It is not used."
+    echo "      To remove it: ssh pi@<PI_IP> 'rm -rf ~/build ~/install ~/log'"
 fi
-cd "$WS"
-rm -rf -- "build/$PKG" "install/$PKG"
-colcon build --symlink-install --packages-select "$PKG"
-python3 -c "$UPDATE_RC" "$PI_IP" "$DOMAIN" "$WS"
-source "$WS/install/setup.bash"
-step '6: Restart ROS discovery on both machines'
-ros2 daemon stop
-remote env ROS_STATIC_PEERS="$PC_IP" ROS_DOMAIN_ID="$DOMAIN" ros2 daemon stop
-if (( LAUNCH )); then
-    step '7: Launch Pi drivers and camera'
-    printf -v REMOTE_ENV 'source /opt/ros/jazzy/setup.bash && source %q && export ROS_STATIC_PEERS=%q ROS_DOMAIN_ID=%q TURTLEBOT3_MODEL=waffle_pi && ' "$PI_WS/install/setup.bash" "$PC_IP" "$DOMAIN"
-    gnome-terminal --tab --title='[PI] Bringup' -- "${SSH[@]:0:${#SSH[@]}-1}" -t "pi@$PI_IP" "${REMOTE_ENV}ros2 launch turtlebot3_bringup robot.launch.py"
-    gnome-terminal --tab --title='[PI] Camera' -- "${SSH[@]:0:${#SSH[@]}-1}" -t "pi@$PI_IP" "${REMOTE_ENV}ros2 launch camera camera.launch.py"
-    echo 'Waiting 25 seconds for Pi startup...'
+EOF
+
+$SSH "$PI" "rm -rf ~/$PI_WS/src/camera"
+scp -q -r -o StrictHostKeyChecking=accept-new "$HERE/src/camera" "$PI:$PI_WS/src/"
+$SSH "$PI" "bash -c '$ROS && cd ~/$PI_WS && rm -rf build/camera install/camera && colcon build --symlink-install --packages-select camera'"
+
+# Check what the bringup and camera terminals will see (same shell as an ssh terminal)
+CHECK=$(pi_rc 'echo "BRINGUP=$(ros2 pkg prefix turtlebot3_bringup 2>/dev/null)"; echo "CAMERA=$(ros2 pkg prefix camera 2>/dev/null)"; echo "V4L2=$(ros2 pkg prefix v4l2_camera 2>/dev/null)"; echo "MODEL=$TURTLEBOT3_MODEL"; echo "LDS=$LDS_MODEL"')
+echo "$CHECK" | grep -vE '^(BRINGUP|CAMERA|V4L2|MODEL|LDS)=' || true      # any errors printed by the Pi's ~/.bashrc
+val() { echo "$CHECK" | grep -oP "^$1=\K.*" | tail -1; }
+echo "turtlebot3_bringup: $(val BRINGUP)"
+echo "camera:             $(val CAMERA)"
+echo "v4l2_camera:        $(val V4L2)"
+echo "TURTLEBOT3_MODEL=$(val MODEL)   LDS_MODEL=$(val LDS)"
+if [ -z "$(val BRINGUP)" ] || [ -z "$(val V4L2)" ] || [[ "$(val CAMERA)" != *"$PI_WS/install/camera" ]] \
+        || [ -z "$(val MODEL)" ] || [ -z "$(val LDS)" ]; then
+    echo
+    echo "The Pi's ROS environment is not right. Its ~/.bashrc ROS lines are:"
+    $SSH "$PI" "grep -nE 'source|ROS|TURTLEBOT3|LDS' ~/.bashrc" || true
+    fail "fix the Pi's ~/.bashrc (it must source /opt/ros/jazzy and ~/$PI_WS and export TURTLEBOT3_MODEL=waffle_pi and LDS_MODEL), or ask the TA. Backup: ~/.bashrc.rob301.bak"
+fi
+echo "OK"
+
+
+step "5. PC: link $PKG into ~/$PC_WS and build it"
+mkdir -p ~/$PC_WS/src
+dest=~/$PC_WS/src/$PKG
+if [ -e "$dest" ] && [ ! -L "$dest" ]; then         # an old real folder: move it out of the way
+    mkdir -p ~/rob301_old
+    mv "$dest" ~/rob301_old/$PKG-$(date +%s)
+    echo "Moved the old $dest to ~/rob301_old/"
+fi
+ln -sfn "$HERE/src/$PKG" "$dest"
+bash -c "$ROS && cd ~/$PC_WS && rm -rf build/$PKG install/$PKG && colcon build --symlink-install --packages-select $PKG"
+grep -q "$PC_WS/install/setup.bash" ~/.bashrc || echo "source ~/$PC_WS/install/setup.bash" >> ~/.bashrc
+
+
+step "6. Restart the ROS 2 daemon on both machines"
+bash -c "$ROS && ros2 daemon stop" > /dev/null 2>&1 || true
+$SSH "$PI" "bash -c '$ROS && ros2 daemon stop'" > /dev/null 2>&1 || true
+echo "OK"
+
+
+if [ "$LAUNCH" = 1 ]; then
+    step "7. Open the robot terminals"
+    command -v gnome-terminal > /dev/null || fail "gnome-terminal not found: open the terminals by hand (README, Manual launch)"
+    gnome-terminal --tab --title="PI 1 bringup" -- bash -c "$SSH -t $PI \"bash -ic 'ros2 launch turtlebot3_bringup robot.launch.py'\"; exec bash"
+    sleep 3
+    gnome-terminal --tab --title="PI 2 camera" -- bash -c "$SSH -t $PI \"bash -ic 'ros2 launch camera camera.launch.py'\"; exec bash"
+
+    echo "Waiting 25 s for the robot to start, then checking the topics from this PC..."
     sleep 25
-    TOPICS=$(ros2 topic list)
+    TOPICS=$(bash -ic 'ros2 topic list' 2> /dev/null || true)
     MISSING=0
-    for topic in /line_idx /mean_img_rgb /odom; do
-        if grep -Fxq "$topic" <<< "$TOPICS"; then
-            echo "OK: $topic"
-        else
-            echo "MISSING: $topic"
-            MISSING=1
-        fi
+    for t in /odom /line_idx /mean_img_rgb; do
+        if echo "$TOPICS" | grep -qx "$t"; then echo "  $t   OK"; else echo "  $t   MISSING"; MISSING=1; fi
     done
-    (( MISSING == 0 )) || fail 'Topics missing. Check Pi tabs and step 3 network settings; open new terminals.'
-    gnome-terminal --tab --title='[PC] Route follower' -- bash -c '
-        set -e
-        trap '\''echo "ERROR: demo command failed; inspect output above."; read -r -p "Press Enter to close"'\'' ERR
-        source /opt/ros/jazzy/setup.bash
-        source "$1/install/setup.bash"
-        export ROS_STATIC_PEERS="$2" ROS_DOMAIN_ID="$3"
-        if [[ ! -f "$HOME/rob301_colors.json" || "$4" == 1 ]]; then
-            ros2 run route_follower calibrate_colors
-        fi
-        read -r -p "Robot in place? Press Enter to start"
-        ros2 run route_follower route_follower
-    ' bash "$WS" "$PI_IP" "$DOMAIN" "$CALIBRATE"
+    if [ "$MISSING" = 1 ]; then
+        echo "Look at the PI 1 / PI 2 tabs for errors. If the topics exist on the Pi but not here,"
+        echo "it is the network (step 3): close all terminals, open new ones and rerun this script."
+        fail "topics missing, demo not started"
+    fi
+
+    CAL=""
+    if [ "$CALIBRATE" = 1 ] || [ ! -f ~/rob301_colors.json ]; then CAL="ros2 run $PKG calibrate_colors && "; fi
+    gnome-terminal --tab --title="PC demo" -- bash -ic "${CAL}read -p 'Robot on a patch, facing the driving direction? Press Enter to start ' _ && ros2 run $PKG $PKG; exec bash"
+elif [ "$CALIBRATE" = 1 ]; then
+    echo "--calibrate only works together with --launch"
 fi
-step 'Setup complete: open new terminals to load the updated ROS environment'
-if (( CALIBRATE && ! LAUNCH )); then
-    echo '--calibrate takes effect with --launch; nothing was launched.'
-fi
+
+
+step "Done"
+echo "Open NEW terminals now (terminals that were already open still have the old settings)."
