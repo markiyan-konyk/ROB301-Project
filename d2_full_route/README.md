@@ -42,9 +42,10 @@ What it does:
 5. PC: links `src/route_follower` into `~/ros2_ws/src` and builds it.
 6. Restarts the ROS 2 daemon on both machines.
 7. With `--launch`: opens the [PI] bringup and camera tabs (through the Pi's own
-   `~/.bashrc`, like a normal ssh terminal), waits 25 s, checks `/odom`, `/line_idx`,
-   `/mean_img_rgb` from the PC, then opens the demo tab. Missing topics stop it before
-   the demo tab.
+   `~/.bashrc`, like a normal ssh terminal), waits up to 90 s for `/odom`, `/line_idx`,
+   `/mean_img_rgb` to appear on the PC, then opens the demo tab. If a topic is still
+   missing it prints a warning and opens the demo tab anyway: the robot waits there until
+   both camera topics arrive.
 
 The PC demo tab calibrates if `~/rob301_colors.json` is absent. For each of blue,
 green, yellow, orange, and line, place the robot on that surface, press Enter,
@@ -138,6 +139,15 @@ on patch versus line. If either sensor stops arriving for over one second, the
 controller stops and warns; it resumes when both are fresh. Pending debounce and
 PID history reset during a stale-data stop.
 
+- **Robot does not move.** Check in this order, in a new [PC] terminal:
+  1. `ros2 node list` must show `/route_follower` (our node; if missing, no demo tab is
+     running: start it with `ros2 run route_follower route_follower`) and `/turtlebot3_node`
+     (bringup; if missing, look at the PI 1 tab).
+  2. The demo tab must not be printing `STOPPED: waiting for fresh /line_idx AND /mean_img_rgb`.
+     If it is: `ros2 topic hz /line_idx` and `ros2 topic hz /mean_img_rgb` must both show a
+     rate (several Hz). No rate means look at the PI 2 camera tab.
+  3. `ros2 topic echo /cmd_vel --once` must show `linear.x: 0.05`. If it does and the robot
+     still does not move, bringup is not receiving it: restart the PI 1 tab.
 - `Package 'turtlebot3_bringup' not found` or `not found: .../install/...local_setup.bash`
   on the Pi: its `~/.bashrc` sources a wrong or broken workspace. Rerun setup: step 4
   repairs the usual case and otherwise prints the Pi's `~/.bashrc` ROS lines. It must

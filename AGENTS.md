@@ -125,6 +125,11 @@ Rules it follows, keep them:
   `v4l2_camera` are found and `TURTLEBOT3_MODEL` / `LDS_MODEL` are set; if not, print the Pi's
   `~/.bashrc` ROS lines and stop with a clear message.
 - Commands that legitimately "fail" when nothing is wrong (`ros2 daemon stop`) get `|| true`.
+- Topic checks poll (`ros2 topic list` every 5 s, up to 90 s): the Pi 3B is slow to start and a
+  just-restarted daemon misses topics on the first call. A failed check only warns; it never
+  stops the script before the demo tab opens (the node itself waits for its topics).
+- Every README has a "Robot does not move" checklist: `ros2 node list` (our node + bringup),
+  `ros2 topic hz` of the input topics, `ros2 topic echo /cmd_vel --once`.
 
 **`README.md`**: what the demo shows; one-shot path (`git clone` the repo on the Remote PC,
 `bash <folder>/setup.sh <PI_IP> --launch`, open new terminals afterwards); manual path as a table

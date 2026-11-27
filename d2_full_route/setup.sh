@@ -143,17 +143,27 @@ if [ "$LAUNCH" = 1 ]; then
     sleep 3
     gnome-terminal --tab --title="PI 2 camera" -- bash -c "$SSH -t $PI \"bash -ic 'ros2 launch camera camera.launch.py'\"; exec bash"
 
-    echo "Waiting 25 s for the robot to start, then checking the topics from this PC..."
-    sleep 25
-    TOPICS=$(bash -ic 'ros2 topic list' 2> /dev/null || true)
-    MISSING=0
-    for t in /odom /line_idx /mean_img_rgb; do
-        if echo "$TOPICS" | grep -qx "$t"; then echo "  $t   OK"; else echo "  $t   MISSING"; MISSING=1; fi
+    # The Pi 3B needs a while to start, and the ROS 2 daemon restarted in step 6 needs a few
+    # seconds of discovery: one early `ros2 topic list` misses topics that do exist. Poll instead.
+    echo "Waiting for /odom, /line_idx and /mean_img_rgb from this PC (up to 90 s)..."
+    MISSING="/odom /line_idx /mean_img_rgb"
+    for i in $(seq 1 18); do
+        sleep 5
+        TOPICS=$(bash -ic 'ros2 topic list' 2> /dev/null || true)
+        MISSING=""
+        for t in /odom /line_idx /mean_img_rgb; do
+            echo "$TOPICS" | grep -qx "$t" || MISSING="$MISSING $t"
+        done
+        [ -z "$MISSING" ] && break
+        echo "  $((i * 5)) s, still missing:$MISSING"
     done
-    if [ "$MISSING" = 1 ]; then
-        echo "Look at the PI 1 / PI 2 tabs for errors. If the topics exist on the Pi but not here,"
-        echo "it is the network (step 3): close all terminals, open new ones and rerun this script."
-        fail "topics missing, demo not started"
+    if [ -z "$MISSING" ]; then
+        echo "  /odom /line_idx /mean_img_rgb   OK"
+    else
+        echo "WARNING: still missing after 90 s:$MISSING"
+        echo "  /odom missing: look at the PI 1 bringup tab.  /line_idx or /mean_img_rgb missing: PI 2 camera tab."
+        echo "  If they exist on the Pi but not here, it is the network: close all terminals, open new ones, rerun."
+        echo "Opening the demo tab anyway: the robot waits there until both camera topics arrive."
     fi
 
     CAL=""
