@@ -60,8 +60,10 @@ echo "OK"
 
 step "3. ROS network settings in ~/.bashrc (both machines)"
 # Same ROS_DOMAIN_ID on both: the Pi gets the PC's value
-PC_DOMAIN=$(bash -ic 'echo "DOMAIN=${ROS_DOMAIN_ID:-0}"' 2> /dev/null | grep -oP 'DOMAIN=\K.*' | tail -1)
-[ -n "$PC_DOMAIN" ] || PC_DOMAIN=0
+# (read ~/.bashrc directly: never start "bash -i" from this script, it takes over the terminal
+#  and the script gets "[1]+ Stopped")
+PC_DOMAIN=$(grep -oP '^\s*export\s+ROS_DOMAIN_ID=\K[0-9]+' ~/.bashrc | tail -1 || true)
+[ -n "$PC_DOMAIN" ] || PC_DOMAIN=${ROS_DOMAIN_ID:-0}
 # Each machine lists the OTHER machine's IP
 sed -i '/ROS_STATIC_PEERS/d; /ROS_DOMAIN_ID/d' ~/.bashrc
 echo "export ROS_STATIC_PEERS=$PI_IP" >> ~/.bashrc
@@ -146,10 +148,15 @@ if [ "$LAUNCH" = 1 ]; then
     # The Pi 3B needs a while to start, and the ROS 2 daemon restarted in step 6 needs a few
     # seconds of discovery: one early `ros2 topic list` misses topics that do exist. Poll instead.
     echo "Waiting for /odom, /line_idx and /mean_img_rgb from this PC (up to 90 s)..."
+    # This PC's ROS environment, set here directly (no "bash -i": it would stop this script)
+    set +e
+    source /opt/ros/jazzy/setup.bash
+    set -e
+    export ROS_STATIC_PEERS="$PI_IP" ROS_DOMAIN_ID="$PC_DOMAIN"
     MISSING="/odom /line_idx /mean_img_rgb"
     for i in $(seq 1 18); do
         sleep 5
-        TOPICS=$(bash -ic 'ros2 topic list' 2> /dev/null || true)
+        TOPICS=$(timeout 15 ros2 topic list < /dev/null 2> /dev/null || true)
         MISSING=""
         for t in /odom /line_idx /mean_img_rgb; do
             echo "$TOPICS" | grep -qx "$t" || MISSING="$MISSING $t"

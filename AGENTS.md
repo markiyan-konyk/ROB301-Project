@@ -125,6 +125,13 @@ Rules it follows, keep them:
   `v4l2_camera` are found and `TURTLEBOT3_MODEL` / `LDS_MODEL` are set; if not, print the Pi's
   `~/.bashrc` ROS lines and stop with a clear message.
 - Commands that legitimately "fail" when nothing is wrong (`ros2 daemon stop`) get `|| true`.
+- Never run `bash -i` / `bash -ic` on the PC from inside the script: the interactive shell takes
+  over the terminal and the script gets `[1]+ Stopped`. In the script, `source
+  /opt/ros/jazzy/setup.bash` and export `ROS_STATIC_PEERS` / `ROS_DOMAIN_ID` directly; read values
+  from `~/.bashrc` with grep. `bash -ic` is fine only inside a new gnome-terminal tab or on the Pi
+  over ssh.
+- Every README has a "Start the robot by hand" box near the top: the exact [PC] `ros2 run`
+  commands to calibrate and start the demo once bringup and the camera are up.
 - Topic checks poll (`ros2 topic list` every 5 s, up to 90 s): the Pi 3B is slow to start and a
   just-restarted daemon misses topics on the first call. A failed check only warns; it never
   stops the script before the demo tab opens (the node itself waits for its topics).

@@ -22,6 +22,18 @@ cd ROB301-Project
 bash d2_full_route/setup.sh <PI_IP> --launch
 ```
 
+### Start the robot by hand
+
+Once bringup and the camera are running (`ros2 topic list` on the PC shows `/odom`,
+`/line_idx` and `/mean_img_rgb`), open a **new** [PC] terminal:
+
+```bash
+ros2 run route_follower calibrate_colors     # once per session / lighting (robot does not move)
+ros2 run route_follower route_follower       # place the robot on a patch first: it starts driving
+```
+
+Ctrl+C stops the robot. `ros2 run route_follower route_follower 1` stops after one office.
+
 Replace `<PI_IP>` with the robot's IPv4 address. The Pi password is `turtlebot`;
 setup asks for it at most once (it installs your `~/.ssh/id_ed25519` key, so plain
 `ssh pi@<PI_IP>` needs no password afterwards). Keep the checkout in place: the PC
