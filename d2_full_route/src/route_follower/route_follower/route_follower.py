@@ -13,13 +13,17 @@ from std_msgs.msg import Float64MultiArray, UInt32
 from .logic import PID, Route, classify, load_colors, sensors_fresh, valid_rgb
 
 # ---- Tunable constants (Remote PC) ----
-SPEED = 0.05
-KP = 0.002
+SPEED = 0.05           # forward speed on straight tape [m/s]
+KP = 0.003             # [rad/s per pixel]; was 0.002, too weak in the corners
 KI = 0.0
 KD = 0.0
-MAX_TURN = 0.5
+MAX_TURN = 0.8         # [rad/s]; was 0.5
+TURN_SLOWDOWN = 0.6    # in the sharpest turn, speed drops to (1 - 0.6) = 40% of SPEED
+STEER_ON_PATCH = True  # keep following the tape while a patch is in view (the colour reading
+                       # looks far ahead, so "on patch" starts well before the robot is on it)
 CENTER = 320
-DEBOUNCE = 3
+DEBOUNCE = 4           # consecutive frames needed to switch between patch and line
+PATCH_MAX_DIST = 25.0  # RGB distance to a calibrated patch colour to count as that patch
 NUM_OFFICES = 11
 MAP = ['yellow', 'green', 'blue', 'orange', 'orange', 'green', 'blue', 'orange', 'yellow', 'green', 'blue']
 CONTROL_HZ = 20.0
@@ -61,7 +65,7 @@ class RouteFollower(Node):
         if not sensors_fresh(now, self.line_time, self.rgb_time, STALE_SECONDS):
             return
         old_state = self.route.state
-        reached = self.route.observe(classify(msg.data, self.means))
+        reached = self.route.observe(classify(msg.data, self.means, PATCH_MAX_DIST))
         if old_state != self.route.state:
             self.pid.reset()
         if reached:
@@ -92,8 +96,11 @@ class RouteFollower(Node):
                 self.get_logger().warning('STOPPED: waiting for fresh /line_idx AND /mean_img_rgb (<= 1 s).')
                 self.last_warning = now
             return
-        turn = self.pid.update(CENTER-self.line_idx, dt) if self.route.state == 'FOLLOW_LINE' else 0.0
-        self.publish_velocity(SPEED, turn)
+        steer = self.route.state == 'FOLLOW_LINE' or STEER_ON_PATCH
+        turn = self.pid.update(CENTER-self.line_idx, dt) if steer else 0.0
+        # Slow down in turns so the robot can make the corners without losing the tape
+        speed = SPEED * (1.0 - TURN_SLOWDOWN * abs(turn) / MAX_TURN)
+        self.publish_velocity(speed, turn)
 
     def stop(self):
         for _ in range(5):

@@ -10,6 +10,10 @@ DEFAULT_COLORS = {
     'line': [160, 160, 160],
 }
 COLOR_FILE = Path.home() / 'rob301_colors.json'
+# A reading counts as a patch only if it is this close (RGB distance) to that patch's calibrated
+# mean. While a patch is only partly in view the camera mean is a patch/floor mix, and on our
+# robot those mixes land nearest to yellow: without this limit they count as extra offices.
+PATCH_MAX_DIST = 25.0
 
 
 def valid_rgb(rgb):
@@ -27,10 +31,20 @@ def load_colors(path=COLOR_FILE):
         return DEFAULT_COLORS.copy(), f'WARNING: USING UNCALIBRATED DEFAULT COLORS: {exc}. Run calibrate_colors!'
 
 
-def classify(rgb, means):
+def nearest(rgb, means):
+    """Return (class, RGB distance) of the closest calibrated mean."""
     if not valid_rgb(rgb):
         raise ValueError('invalid RGB sample')
-    return min(CLASSES, key=lambda c: sum((a-b)**2 for a, b in zip(rgb, means[c])))
+    name = min(CLASSES, key=lambda c: math.dist(rgb, means[c]))
+    return name, math.dist(rgb, means[name])
+
+
+def classify(rgb, means, max_dist=PATCH_MAX_DIST):
+    """Nearest class; a patch farther than max_dist from its mean is treated as 'line'."""
+    name, dist = nearest(rgb, means)
+    if name != 'line' and dist > max_dist:
+        return 'line'
+    return name
 
 
 class PID:
@@ -67,16 +81,21 @@ class Route:
     def reset_pending(self):
         self.pending = None
         self.frames = 0
+        self.votes = []
 
     def observe(self, color):
-        """Call once per fresh RGB frame; return a reached patch's color."""
+        """Call once per fresh RGB frame; return a reached patch's color (majority of its frames)."""
         if color not in CLASSES:
             raise ValueError('unknown color')
         if self.state == 'DONE':
             return None
         kind = 'line' if color == 'line' else 'patch'
-        self.frames = self.frames + 1 if kind == self.pending else 1
-        self.pending = kind
+        if kind == self.pending:
+            self.frames += 1
+        else:
+            self.pending, self.frames, self.votes = kind, 1, []
+        if kind == 'patch':
+            self.votes.append(color)
         if self.frames < self.debounce:
             return None
         if self.state == 'ON_PATCH' and kind == 'line':
@@ -84,7 +103,7 @@ class Route:
         elif self.state == 'FOLLOW_LINE' and kind == 'patch':
             self.count += 1
             self.state = 'DONE' if self.count >= self.target else 'ON_PATCH'
-            return color
+            return max(self.votes, key=self.votes.count)
         return None
 
 

@@ -85,17 +85,28 @@ demo day).
   press Enter", average ~30 `/mean_img_rgb` samples, save all to `~/rob301_colors.json`
   (`{"blue": [r, g, b], ..., "line": [r, g, b]}`). Then print the live classification for ~10 s
   so the user can check it.
-- Classifier: nearest calibrated mean RGB (Euclidean). If the file is missing, use hard-coded
-  defaults and log a loud warning.
-- Debounce: switch between "on patch" and "on line" only after 3 consecutive frames agree.
-- On a patch `/line_idx` is meaningless: drive straight (turn 0) until the line is back.
+- Classifier: nearest calibrated mean RGB (Euclidean), **but a patch only if within
+  `PATCH_MAX_DIST` (25) of that patch's mean, otherwise `line`**. Lab-tested: while a patch is
+  half in view the camera mean is a patch/floor mix that lands nearest to yellow, and plain
+  nearest-mean counted those as extra offices. If the file is missing, use hard-coded defaults
+  and log a loud warning.
+- Debounce: switch between "on patch" and "on line" only after 4 consecutive frames agree. The
+  colour of a patch = majority of its patch frames (not the first frame).
+- Keep following the tape while a patch is in view (`STEER_ON_PATCH = True`): `/mean_img_rgb`
+  averages the far part of the image, so a patch is "seen" well before the robot is on it, and
+  driving straight from that moment ran the robot off the tape near offices on curves.
+- Known on our robot: blue and green read almost the same (~8 RGB units apart; every patch is
+  60+ from the tape). Patch-vs-line detection is reliable, blue-vs-green is not.
+- **Copy `d2_full_route/src/route_follower/route_follower/logic.py` and `colors.py` (lab-tested)
+  into D3/D4; do not rewrite the classifier, PID or route counting.**
 
 ## Code rules
 
 - One demo node per deliverable + a ROS-free `logic.py` (Bayes filter, classifier, PID) so the
   math can be tested with plain Python on Windows.
-- Line following: PID on the error `320 - line_idx` (Lab 2 PDF), turn rate clipped to ±0.5 rad/s.
-  Start conservative: SPEED 0.05 m/s, P only, KP ≈ 0.002 (rad/s per pixel). Tuned on the robot.
+- Line following: PID on the error `320 - line_idx` (Lab 2 PDF). Lab-tuned starting point:
+  SPEED 0.05 m/s, KP 0.003 (KP 0.002 lost the tape in corners), KI = KD = 0, MAX_TURN 0.8 rad/s,
+  and slow down in turns: `speed = SPEED * (1 - 0.6 * |turn| / MAX_TURN)`. Use D2's values.
 - Ctrl+C must stop the robot: init rclpy with `SignalHandlerOptions.NO`, catch
   KeyboardInterrupt, publish zero velocity a few times, then shut down.
 - Tunable constants in one clearly marked block at the top of the node file.

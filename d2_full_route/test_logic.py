@@ -80,6 +80,31 @@ def main():
     assert not sensors_fresh(10, 8.99, 10, 1)
     assert not sensors_fresh(10, 10, 8.99, 1)
     assert sensors_fresh(10, 9, 10, 1)
+
+    # Regression, calibration from our robot (lab run 1): half-visible blue/orange patches mix
+    # with the floor and land nearest to yellow. They must not count as extra offices.
+    lab = {'blue': [186.5, 181.6, 183.2], 'green': [184.7, 189.3, 184.2],
+           'yellow': [199.6, 170.6, 151.8], 'orange': [250.3, 124.9, 101.3],
+           'line': [150.8, 133.5, 140.9]}
+
+    def mix(patch, f):
+        return [f*a + (1-f)*b for a, b in zip(lab[patch], lab['line'])]
+
+    assert classify(mix('blue', .5), lab) == 'line'      # was 'yellow'
+    assert classify(mix('orange', .5), lab) == 'line'    # was 'yellow'
+    assert classify(lab['yellow'], lab) == 'yellow'
+    lap = Route(3, debounce=4)
+    for _ in range(4):
+        lap.observe('line')
+    reported = []
+    for patch in ['blue', 'orange', 'yellow']:
+        frames = [mix(patch, f) for f in (.3, .5, .7)] + [lab[patch]]*8 + \
+                 [mix(patch, f) for f in (.7, .5, .3)] + [lab['line']]*6
+        for rgb in frames:
+            hit = lap.observe(classify(rgb, lab))
+            if hit:
+                reported.append(hit)
+    assert reported == ['blue', 'orange', 'yellow'], reported
     print('All D2 logic assertions passed.')
 
 

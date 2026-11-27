@@ -136,17 +136,26 @@ the symlink install, Python edits need no rebuild.
 
 | Knob | Default | Purpose |
 | --- | --- | --- |
-| `SPEED` | 0.05 m/s | Forward speed, including patch crossing |
-| `KP`, `KI`, `KD` | 0.002, 0, 0 | PID gains for `CENTER - line_idx`; begin with P only |
-| `MAX_TURN` | 0.5 rad/s | Absolute turn-rate limit |
+| `SPEED` | 0.05 m/s | Forward speed on straight tape |
+| `KP`, `KI`, `KD` | 0.003, 0, 0 | PID gains for `CENTER - line_idx`. Raise `KP` if it still leaves the tape in corners, lower it if it wobbles on straights |
+| `MAX_TURN` | 0.8 rad/s | Absolute turn-rate limit |
+| `TURN_SLOWDOWN` | 0.6 | In the sharpest turn the speed drops to 40% of `SPEED` |
+| `STEER_ON_PATCH` | True | Keep following the tape while a patch is in view (the colour reading looks far ahead). Set False only if the robot wanders while crossing patches |
 | `CENTER` | 320 | Center of the 640-pixel camera image |
-| `DEBOUNCE` | 3 frames | Consecutive patch-vs-line readings required to switch state |
+| `DEBOUNCE` | 4 frames | Consecutive patch-vs-line readings required to switch state |
+| `PATCH_MAX_DIST` | 25 | A reading counts as a patch only within this RGB distance of the calibrated patch colour. Half-visible patches mix with the floor and otherwise read as yellow (extra offices). Raise it if real patches are missed, lower it if extra offices appear |
 | `NUM_OFFICES` | 11 | Default arrival count; overridden by positional `N` |
 | `MAP` | Offices 2..12 | Editable course map for reference; not used for localization |
 | `CONTROL_HZ`, `STALE_SECONDS` | 20 Hz, 1 s | Control frequency and sensor timeout |
 
-On a confirmed patch the turn rate is zero. A patch hue changing to another patch
-hue does not count another office. Both transitions require three frames agreeing
+The colour logged for an office is the majority of its patch frames. A patch hue
+changing to another patch hue does not count another office.
+
+`color_monitor` prints the nearest colour and its distance: use it to set
+`PATCH_MAX_DIST` (robot fully on a patch: distance well below 25; half on: above).
+Known issue: on our robot blue and green patches read almost the same (about 8 RGB
+units apart, versus 60+ between any patch and the tape). That is fine for D2 (it only
+counts patches) but matters for D3. Both transitions require four frames agreeing
 on patch versus line. If either sensor stops arriving for over one second, the
 controller stops and warns; it resumes when both are fresh. Pending debounce and
 PID history reset during a stale-data stop.

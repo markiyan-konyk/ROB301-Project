@@ -8,7 +8,7 @@ from rclpy.qos import qos_profile_sensor_data
 from rclpy.signals import SignalHandlerOptions
 from std_msgs.msg import Float64MultiArray
 
-from .logic import CLASSES, COLOR_FILE, classify, load_colors, valid_rgb
+from .logic import CLASSES, COLOR_FILE, classify, load_colors, nearest, valid_rgb
 
 SAMPLES = 30
 SAMPLE_TIMEOUT = 15.0
@@ -40,7 +40,9 @@ class ColorReader(Node):
                 if self.received is None or now-self.received > 1:
                     print('Waiting for fresh /mean_img_rgb', flush=True)
                 else:
-                    print(f'RGB {[round(x, 1) for x in self.latest]} -> {classify(self.latest, means)}', flush=True)
+                    name, dist = nearest(self.latest, means)
+                    print(f'RGB {[round(x, 1) for x in self.latest]} -> {classify(self.latest, means)}'
+                          f'   (nearest {name}, distance {dist:.0f})', flush=True)
                 next_print = now + 0.5
 
 

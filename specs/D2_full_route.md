@@ -26,7 +26,7 @@ Executables of `route_follower`:
 ## Node behaviour (control timer at 20 Hz)
 
 - Start state `ON_PATCH` (the robot starts on a patch).
-- `ON_PATCH`: drive straight at SPEED, turn 0. When `line` is debounced -> `FOLLOW_LINE`.
+- `ON_PATCH`: keep following the tape (see AGENTS.md, colour sensing). When `line` is debounced -> `FOLLOW_LINE`.
 - `FOLLOW_LINE`: PID on `/line_idx` (see AGENTS.md). When a patch colour is
   debounced -> count it, log `Office #n reached: <colour>`, -> `ON_PATCH`.
 - After N patches: stop, log "Full route done", stay stopped.

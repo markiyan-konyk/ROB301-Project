@@ -15,8 +15,13 @@ Then add:
   `d1_bayes_sim/bayes.py`.
 - Executable `localizer` (replaces `route_follower`): same driving state machine as D2, plus Bayes:
   - `MAP` constant at the top of the file (AGENTS.md).
+  - Keep D2's driving, classifier and counting exactly as they are (lab-tested; see AGENTS.md).
   - Measurement z of a patch = majority class of its first VOTE_FRAMES (8) patch frames; if the
     majority share is < 0.6, z = `nothing`.
+  - Blue and green read almost the same on our robot. Measure the real confusion first: run
+    `color_monitor` with the robot fully on each patch colour and note how often blue reads as
+    green and vice versa, then put those numbers in the Table 2 measurement model (the Bayes
+    filter copes with confusion it knows about). README shows how to redo this.
   - First patch (the start patch): update only. Every later patch: `predict(u=+1)` then `update(z)`.
   - After each update print one line per office with its probability (and a small text bar),
     then `Best guess: office N (p = 0.xx)`, adding `CONFIDENT` when p > 0.8.
